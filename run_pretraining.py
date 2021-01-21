@@ -176,6 +176,7 @@ class PretrainingModel(object):
             model.get_sequence_output(), inputs.masked_lm_positions)
         logits = get_token_logits(
             relevant_reprs, model.get_embedding_table(), self._bert_config)
+      logits = tf.cast(logits, dtype=tf.float32)
       return get_softmax_output(
           logits, inputs.masked_lm_ids, inputs.masked_lm_weights,
           self._bert_config.vocab_size)
@@ -191,6 +192,7 @@ class PretrainingModel(object):
           kernel_initializer=modeling.create_initializer(
               self._bert_config.initializer_range))
       logits = tf.squeeze(tf.layers.dense(hidden, units=1), -1)
+      logits = tf.cast(logits, dtype=tf.float32)
       if self._config.electric_objective:
         log_q = tf.reduce_sum(
             tf.nn.log_softmax(cloze_output.logits) * tf.one_hot(
@@ -353,9 +355,37 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
 
   def model_fn(features, labels, mode, params):
     """Build the model for training."""
-    model = PretrainingModel(config, features,
+    with tf.tpu.bfloat16_scope():
+      model = PretrainingModel(config, features,
                              mode == tf.estimator.ModeKeys.TRAIN)
     utils.log("Model is built!")
+    # Load pre-trained weights from checkpoint
+    tvars = tf.trainable_variables()
+
+    init_checkpoint = tf.train.latest_checkpoint(config.init_checkpoint)
+    utils.log("Using checkpoint", init_checkpoint)
+    tvars = tf.trainable_variables()
+
+    initialized_variable_names = {}
+    scaffold_fn = None
+    if init_checkpoint:
+      assignment_map, initialized_variable_names = modeling.get_assignment_map_from_checkpoint(
+          tvars, init_checkpoint)
+      if config.use_tpu:
+        def tpu_scaffold():
+          tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
+          return tf.train.Scaffold()
+        scaffold_fn = tpu_scaffold
+      else:
+        tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
+
+    utils.log("**** Trainable Variables ****")
+    for var in tvars:
+      init_string = ""
+      if var.name in initialized_variable_names:
+        init_string = ", *INIT_FROM_CKPT*"
+      utils.log("  name = %s, shape = %s%s", var.name, var.shape,
+                      init_string)
     if mode == tf.estimator.ModeKeys.TRAIN:
       train_op = optimization.create_optimizer(
           model.total_loss, config.learning_rate, config.num_train_steps,
@@ -368,6 +398,7 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
           mode=mode,
           loss=model.total_loss,
           train_op=train_op,
+          scaffold_fn=scaffold_fn,
           training_hooks=[training_utils.ETAHook(
               {} if config.use_tpu else dict(loss=model.total_loss),
               config.num_train_steps, config.iterations_per_loop,
@@ -377,6 +408,7 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
       output_spec = tf.estimator.tpu.TPUEstimatorSpec(
           mode=mode,
           loss=model.total_loss,
+          scaffold_fn=scaffold_fn,
           eval_metrics=model.eval_metrics,
           evaluation_hooks=[training_utils.ETAHook(
               {} if config.use_tpu else dict(loss=model.total_loss),
