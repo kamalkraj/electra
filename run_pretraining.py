@@ -164,18 +164,19 @@ class PretrainingModel(object):
   def _get_masked_lm_output(self, inputs: pretrain_data.Inputs, model):
     """Masked language modeling softmax layer."""
     with tf.variable_scope("generator_predictions"):
-      if self._config.uniform_generator:
-        logits = tf.zeros(self._bert_config.vocab_size)
-        logits_tiled = tf.zeros(
-            modeling.get_shape_list(inputs.masked_lm_ids) +
-            [self._bert_config.vocab_size])
-        logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
-        logits = logits_tiled
-      else:
-        relevant_reprs = pretrain_helpers.gather_positions(
-            model.get_sequence_output(), inputs.masked_lm_positions)
-        logits = get_token_logits(
-            relevant_reprs, model.get_embedding_table(), self._bert_config)
+      with tf.tpu.bfloat16_scope():
+        if self._config.uniform_generator:
+          logits = tf.zeros(self._bert_config.vocab_size)
+          logits_tiled = tf.zeros(
+              modeling.get_shape_list(inputs.masked_lm_ids) +
+              [self._bert_config.vocab_size])
+          logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
+          logits = logits_tiled
+        else:
+          relevant_reprs = pretrain_helpers.gather_positions(
+              model.get_sequence_output(), inputs.masked_lm_positions)
+          logits = get_token_logits(
+              relevant_reprs, model.get_embedding_table(), self._bert_config)
       logits = tf.cast(logits, dtype=tf.float32)
       return get_softmax_output(
           logits, inputs.masked_lm_ids, inputs.masked_lm_weights,
@@ -185,13 +186,14 @@ class PretrainingModel(object):
       self, inputs, discriminator, labels, cloze_output=None):
     """Discriminator binary classifier."""
     with tf.variable_scope("discriminator_predictions"):
-      hidden = tf.layers.dense(
-          discriminator.get_sequence_output(),
-          units=self._bert_config.hidden_size,
-          activation=modeling.get_activation(self._bert_config.hidden_act),
-          kernel_initializer=modeling.create_initializer(
-              self._bert_config.initializer_range))
-      logits = tf.squeeze(tf.layers.dense(hidden, units=1), -1)
+      with tf.tpu.bfloat16_scope():
+        hidden = tf.layers.dense(
+            discriminator.get_sequence_output(),
+            units=self._bert_config.hidden_size,
+            activation=modeling.get_activation(self._bert_config.hidden_act),
+            kernel_initializer=modeling.create_initializer(
+                self._bert_config.initializer_range))
+        logits = tf.squeeze(tf.layers.dense(hidden, units=1), -1)
       logits = tf.cast(logits, dtype=tf.float32)
       if self._config.electric_objective:
         log_q = tf.reduce_sum(
@@ -321,15 +323,16 @@ def build_transformer(config: configure_pretraining.PretrainingConfig,
                       inputs: pretrain_data.Inputs, is_training,
                       bert_config, reuse=False, **kwargs):
   """Build a transformer encoder network."""
-  with tf.variable_scope(tf.get_variable_scope(), reuse=reuse):
-    return modeling.BertModel(
-        bert_config=bert_config,
-        is_training=is_training,
-        input_ids=inputs.input_ids,
-        input_mask=inputs.input_mask,
-        token_type_ids=inputs.segment_ids,
-        use_one_hot_embeddings=config.use_tpu,
-        **kwargs)
+  with tf.tpu.bfloat16_scope():
+    with tf.variable_scope(tf.get_variable_scope(), reuse=reuse):
+      return modeling.BertModel(
+          bert_config=bert_config,
+          is_training=is_training,
+          input_ids=inputs.input_ids,
+          input_mask=inputs.input_mask,
+          token_type_ids=inputs.segment_ids,
+          use_one_hot_embeddings=config.use_tpu,
+          **kwargs)
 
 
 def roll(arr, direction):
@@ -355,8 +358,7 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
 
   def model_fn(features, labels, mode, params):
     """Build the model for training."""
-    with tf.tpu.bfloat16_scope():
-      model = PretrainingModel(config, features,
+    model = PretrainingModel(config, features,
                              mode == tf.estimator.ModeKeys.TRAIN)
     utils.log("Model is built!")
     # Load pre-trained weights from checkpoint
