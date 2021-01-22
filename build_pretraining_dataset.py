@@ -121,7 +121,7 @@ class ExampleWriter(object):
                num_jobs, blanks_separate_docs, do_lower_case,
                num_out_files=1000):
     self._blanks_separate_docs = blanks_separate_docs
-    tokenizer = tokenization.FullTokenizer(
+    tokenizer = tokenization.ElectraTokenizer(
         vocab_file=vocab_file,
         do_lower_case=do_lower_case)
     self._example_builder = ExampleBuilder(tokenizer, max_seq_length)
