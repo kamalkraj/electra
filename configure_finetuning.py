@@ -30,6 +30,7 @@ class FinetuningConfig(object):
   def __init__(self, model_name, data_dir, **kwargs):
     # general
     self.model_name = model_name
+    self.init_checkpoint = kwargs['init_checkpoint']
     self.debug = False  # debug mode for quickly running things
     self.log_examples = False  # print out some train examples for debugging
     self.num_trials = 1  # how many train+eval runs to perform
@@ -101,14 +102,13 @@ class FinetuningConfig(object):
 
     # default locations of data files
     self.data_dir = data_dir
-    pretrained_model_dir = os.path.join(data_dir, "models", model_name)
     self.raw_data_dir = os.path.join(data_dir, "finetuning_data", "{:}").format
-    self.vocab_file = os.path.join(pretrained_model_dir, "vocab.txt")
+    self.vocab_file = os.path.join("vocab", "vocab.txt")
     if not tf.io.gfile.exists(self.vocab_file):
       self.vocab_file = os.path.join(self.data_dir, "vocab.txt")
     task_names_str = ",".join(
         kwargs["task_names"] if "task_names" in kwargs else self.task_names)
-    self.init_checkpoint = None if self.debug else pretrained_model_dir
+    pretrained_model_dir = self.init_checkpoint
     self.model_dir = os.path.join(pretrained_model_dir, "finetuning_models",
                                   task_names_str + "_model")
     results_dir = os.path.join(pretrained_model_dir, "results")
