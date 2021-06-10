@@ -163,7 +163,7 @@ class SingleOutputTask(task.Task):
         else:
           text_b = tokenization.convert_to_unicode(line[text_b_loc])
         if "test" in split or "diagnostic" in split:
-          label = self._get_dummy_label()
+          label = tokenization.convert_to_unicode(line[label_loc])
         else:
           label = tokenization.convert_to_unicode(line[label_loc])
         if swap:
@@ -217,12 +217,14 @@ class RegressionTask(SingleOutputTask):
 
   def get_prediction_module(self, bert_model, features, is_training,
                             percent_done):
-    reprs = bert_model.get_pooled_output()
-    if is_training:
-      reprs = tf.nn.dropout(reprs, keep_prob=0.9)
+    with tf.tpu.bfloat16_scope():
+      reprs = bert_model.get_pooled_output()
+      if is_training:
+        reprs = tf.nn.dropout(reprs, keep_prob=0.9)
 
-    predictions = tf.layers.dense(reprs, 1)
-    predictions = tf.squeeze(predictions, -1)
+      predictions = tf.layers.dense(reprs, 1)
+      # predictions = tf.nn.sigmoid(predictions)
+    predictions = tf.cast(tf.squeeze(predictions, -1), dtype=tf.float32)
 
     targets = features[self.name + "_targets"]
     losses = tf.square(predictions - targets)
@@ -267,12 +269,14 @@ class ClassificationTask(SingleOutputTask):
   def get_prediction_module(self, bert_model, features, is_training,
                             percent_done):
     num_labels = len(self._label_list)
-    reprs = bert_model.get_pooled_output()
+    with tf.tpu.bfloat16_scope():
+      reprs = bert_model.get_pooled_output()
 
-    if is_training:
-      reprs = tf.nn.dropout(reprs, keep_prob=0.9)
+      if is_training:
+        reprs = tf.nn.dropout(reprs, keep_prob=0.9)
 
-    logits = tf.layers.dense(reprs, num_labels)
+      logits = tf.layers.dense(reprs, num_labels)
+    logits = tf.cast(logits, dtype=tf.float32)
     log_probs = tf.nn.log_softmax(logits, axis=-1)
 
     label_ids = features[self.name + "_label_ids"]
@@ -437,3 +441,256 @@ class STS(RegressionTask):
       examples += self._load_glue(
           lines, split, -3, -2, -1, True, len(examples), True)
     return examples
+
+class MedNLI(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(MedNLI, self).__init__(config, "mednli", tokenizer,
+                               ["contradiction", "entailment", "neutral"])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 0, 1, -1, True)
+
+
+
+class BIOSSES(RegressionTask):
+  """Semantic Textual Similarity."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(BIOSSES, self).__init__(config, "biosses", tokenizer, 0.0, 4.0)
+
+  def _create_examples(self, lines, split):
+    examples = []
+    if split == "test":
+      examples += self._load_glue(lines, split, 1, 2, -1, True)
+    else:
+      examples += self._load_glue(lines, split, 1, 2, -1, True)
+    if self.config.double_unordered and split == "train":
+      examples += self._load_glue(
+          lines, split, 1, 2, -1, True, len(examples), True)
+    return examples
+
+class CLINICALSTS(RegressionTask):
+  """Semantic Textual Similarity."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(CLINICALSTS, self).__init__(config, "clinicalsts", tokenizer, 0.0, 5.0)
+
+  def _create_examples(self, lines, split):
+    examples = []
+    if split == "test":
+      examples += self._load_glue(lines, split, 0, 1, -1, False)
+    else:
+      examples += self._load_glue(lines, split, 0, 1, -1, False)
+    if self.config.double_unordered and split == "train":
+      examples += self._load_glue(
+          lines, split, 0, 1, -1, True, len(examples), True)
+    return examples
+
+class BioASQ(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(BioASQ, self).__init__(config, "bioasq", tokenizer,
+                               ["yes","no"])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 1, 2, -1, False)
+
+
+class PubMedQA(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(PubMedQA, self).__init__(config, "pubmedqa", tokenizer,
+                               ["yes","no","maybe"])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 0, 1, -1, False)
+
+class DDI(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(DDI, self).__init__(config, "ddi", tokenizer,
+                               ["DDI-advise", "DDI-effect", "DDI-int", "DDI-mechanism", 'DDI-false'])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 1, None, -1, False)
+  
+  def get_scorer(self):
+      return classification_metrics.F1Scorer(average='micro',labels=[0,1,2,3])
+ 
+class ChemProt(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(ChemProt, self).__init__(config, "chemprot", tokenizer,
+                               ["CPR:3", "CPR:4", "CPR:5", "CPR:6", "CPR:9", "false"])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 1, None, -1, False)
+    
+  def get_scorer(self):
+      return classification_metrics.F1Scorer(average='micro',labels=[0,1,2,3,4])
+
+
+class GAD(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(GAD, self).__init__(config, "gad", tokenizer,
+                               ["0","1"])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 1, None, -1, True)
+
+  def get_scorer(self):
+      return classification_metrics.F1Scorer('binary')
+
+
+class I2B2(ClassificationTask):
+  """Multi-NLI."""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(I2B2, self).__init__(config, "i2b2", tokenizer,
+                               ['PIP', 'TeCP', 'TeRP', 'TrAP', 'TrCP', 'TrIP', 'TrNAP', 'TrWP', 'false'])
+
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_glue(lines, split, 1, None, -1, True)
+    
+  def get_scorer(self):
+      return classification_metrics.F1Scorer(average='micro',labels=[0,1,2,3,4,5,6,7])
+
+
+class HOC(ClassificationTask):
+  """Multi-Label"""
+
+  def __init__(self, config: configure_finetuning.FinetuningConfig, tokenizer):
+    super(HOC, self).__init__(config, "hoc", tokenizer,
+                               ['0_0','0_1','1_0','1_1','2_0','2_1','3_0','3_1',
+                               '4_0','4_1','5_0','5_1','6_0','6_1','7_0','7_1',
+                               '8_0','8_1','9_0','9_1'])
+
+  def _load_hoc(self, lines, split, text_a_loc, text_b_loc, label_loc,
+                 skip_first_line=False, eid_offset=0, swap=False):
+    examples = []
+    for (i, line) in enumerate(lines):
+      try:
+        if i == 0 and skip_first_line:
+          continue
+        eid = i - (1 if skip_first_line else 0) + eid_offset
+        text_a = tokenization.convert_to_unicode(line[text_a_loc])
+        if text_b_loc is None:
+          text_b = None
+        else:
+          text_b = tokenization.convert_to_unicode(line[text_b_loc])
+        if "test" in split or "diagnostic" in split:
+          label = line[label_loc].split(",")
+        else:
+          label = line[label_loc].split(",")
+        if swap:
+          text_a, text_b = text_b, text_a
+        examples.append(InputExample(eid=eid, task_name=self.name,
+                                     text_a=text_a, text_b=text_b, label=label))
+      except Exception as ex:
+        utils.log("Error constructing example from line", i,
+                  "for task", self.name + ":", ex)
+        utils.log("Input causing the error:", line)
+    return examples
+
+  def _add_features(self, features, example, log):
+    label_map = {}
+    for (i, label) in enumerate(self._label_list):
+      label_map[label] = i
+    label_list = example.label
+    label_id_list = []
+    for label_ in label_list:
+      label_id_list.append(label_map[label_])
+    label_id = [0 for l in range(len(label_map))]
+    for j, label_index in enumerate(label_id_list):
+      label_id[label_index] = 1
+    if log:
+      utils.log("    label: {:} (id = {:})".format(example.label, label_id))
+    features[example.task_name + "_label_ids"] = label_id
+  
+  def get_prediction_module(self, bert_model, features, is_training,
+                            percent_done):
+    num_labels = len(self._label_list)
+    with tf.tpu.bfloat16_scope():
+      reprs = bert_model.get_pooled_output()
+
+      if is_training:
+        reprs = tf.nn.dropout(reprs, keep_prob=0.9)
+
+      logits = tf.layers.dense(reprs, num_labels)
+    logits = tf.cast(logits, dtype=tf.float32)
+    log_probs = tf.nn.sigmoid(logits)
+
+    label_ids = features[self.name + "_label_ids"]
+    labels = tf.cast(label_ids, dtype=tf.float32)
+
+    # per_example_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits)
+    per_example_loss = labels * -tf.log(tf.nn.sigmoid(logits) + 1e-9 ) + (1-labels) * -tf.log(1-tf.nn.sigmoid(logits) + 1e-9)
+    # import ipdb;ipdb.set_trace()
+    losses = tf.reduce_mean(per_example_loss,axis=-1)
+    outputs = dict(
+        loss=losses,
+        logits=logits,
+        predictions=log_probs,
+        label_ids=label_ids,
+        eid=features[self.name + "_eid"],
+    )
+    return losses, outputs
+  
+  def get_examples(self, split):
+    return self._create_examples(read_tsv(
+        os.path.join(self.config.raw_data_dir(self.name), split + ".tsv"),
+        max_lines=100 if self.config.debug else None), split)
+
+  def _create_examples(self, lines, split):
+      return self._load_hoc(lines, split, 1, None, 0, True)
+
+  def get_feature_specs(self):
+    return [feature_spec.FeatureSpec(self.name + "_eid", []),
+            feature_spec.FeatureSpec(self.name + "_label_ids",
+                                 [len(self._label_list)])]
+
+  def get_scorer(self):
+      return classification_metrics.F1Scorer('micro',multi=True)

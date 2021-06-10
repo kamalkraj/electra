@@ -65,25 +65,28 @@ class AccuracyScorer(SentenceLevelScorer):
 class F1Scorer(SentenceLevelScorer):
   """Computes F1 for classification tasks."""
 
-  def __init__(self):
+  def __init__(self, average=None, labels=None, multi=False):
     super(F1Scorer, self).__init__()
-    self._positive_label = 1
+    self.average = average
+    self.labels = labels
+    self.multi = multi
 
   def _get_results(self):
-    n_correct, n_predicted, n_gold = 0, 0, 0
-    for y_true, pred in zip(self._true_labels, self._preds):
-      if pred == self._positive_label:
-        n_gold += 1
-        if pred == self._positive_label:
-          n_predicted += 1
-          if pred == y_true:
-            n_correct += 1
-    if n_correct == 0:
-      p, r, f1 = 0, 0, 0
+    if self.multi:
+      labels_shape = len(self._true_labels[0]) 
+      prec = []
+      rec = []
+      self._preds = np.round(self._preds)
+      for i in range(labels_shape):
+        p = sklearn.metrics.precision_score(self._true_labels,self._preds,average=self.average,labels=[i])
+        r = sklearn.metrics.recall_score(self._true_labels,self._preds,average=self.average,labels=[i])
+        prec.append(p)
+        rec.append(r)
+      p = np.mean(prec)
+      r = np.mean(rec)
+      f1 = 2 * (p*r)/(p+r) 
     else:
-      p = 100.0 * n_correct / n_predicted
-      r = 100.0 * n_correct / n_gold
-      f1 = 2 * p * r / (p + r)
+      p, r, f1, _ = sklearn.metrics.precision_recall_fscore_support(self._true_labels,self._preds,average=self.average,labels=self.labels)
     return [
         ('precision', p),
         ('recall', r),

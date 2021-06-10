@@ -23,6 +23,7 @@ import abc
 import six
 
 import numpy as np
+from sklearn import metrics
 
 from finetune import scorer
 from finetune.tagging import tagging_utils
@@ -55,19 +56,21 @@ class WordLevelScorer(scorer.Scorer):
 class AccuracyScorer(WordLevelScorer):
   """Computes accuracy scores."""
 
-  def __init__(self, auto_fail_label=None):
+  def __init__(self, label_mapping, auto_fail_label=None):
     super(AccuracyScorer, self).__init__()
     self._auto_fail_label = auto_fail_label
+    self.label_mapping = label_mapping
 
   def _get_results(self):
-    correct, count = 0, 0
+    y_true = []
+    y_pred = []
     for labels, preds in zip(self._labels, self._preds):
-      for y_true, y_pred in zip(labels, preds):
-        count += 1
-        correct += (1 if y_pred == y_true and y_true != self._auto_fail_label
-                    else 0)
+      y_true.extend(labels)
+      y_pred.extend(preds)
+    labels = [idx for label,idx in self.label_mapping.items() if label != 'O']
     return [
-        ('accuracy', 100.0 * correct / count),
+        ('accuracy', metrics.accuracy_score(y_true, y_pred)),
+        ('f1_macro', metrics.f1_score(y_true, y_pred, average="macro", labels=labels)),
         ('loss', self.get_loss())
     ]
 

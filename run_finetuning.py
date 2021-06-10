@@ -48,14 +48,15 @@ class FinetuningModel(object):
       bert_config.intermediate_size = 144 * 4
       bert_config.num_attention_heads = 4
     assert config.max_seq_length <= bert_config.max_position_embeddings
-    bert_model = modeling.BertModel(
-        bert_config=bert_config,
-        is_training=is_training,
-        input_ids=features["input_ids"],
-        input_mask=features["input_mask"],
-        token_type_ids=features["segment_ids"],
-        use_one_hot_embeddings=config.use_tpu,
-        embedding_size=config.embedding_size)
+    with tf.tpu.bfloat16_scope():
+      bert_model = modeling.BertModel(
+          bert_config=bert_config,
+          is_training=is_training,
+          input_ids=features["input_ids"],
+          input_mask=features["input_mask"],
+          token_type_ids=features["segment_ids"],
+          use_one_hot_embeddings=config.use_tpu,
+          embedding_size=config.embedding_size)
     percent_done = (tf.cast(tf.train.get_or_create_global_step(), tf.float32) /
                     tf.cast(num_train_steps, tf.float32))
 
@@ -182,8 +183,8 @@ class ModelRunner(object):
     self._estimator.train(
         input_fn=self._train_input_fn, max_steps=self.train_steps)
 
-  def evaluate(self):
-    return {task.name: self.evaluate_task(task) for task in self._tasks}
+  def evaluate(self,split="dev"):
+    return {task.name: self.evaluate_task(task,split) for task in self._tasks}
 
   def evaluate_task(self, task, split="dev", return_results=True):
     """Evaluate the current model."""
@@ -192,6 +193,8 @@ class ModelRunner(object):
     results = self._estimator.predict(input_fn=eval_input_fn,
                                       yield_single_examples=True)
     scorer = task.get_scorer()
+    
+    # import ipdb;ipdb.set_trace()
     for r in results:
       if r["task_id"] != len(self._tasks):  # ignore padding examples
         r = utils.nest_dict(r, self._config.task_names)
@@ -224,7 +227,56 @@ class ModelRunner(object):
       if trial <= self._config.n_writes_test:
         utils.write_pickle(logits[task_name], self._config.test_predictions(
             task_name, split, trial))
-
+  
+  def write_tagging_outputs(self, task, trail, split):
+    """Write tagging predictions to disk."""
+    import numpy as np
+    from seqeval.metrics import classification_report
+    utils.log("Writing out predictions for", task.name, split)
+    predict_input_fn, _ = self._preprocessor.prepare_predict([task], split)
+    results = self._estimator.predict(input_fn=predict_input_fn,
+                                      yield_single_examples=True)
+    label_mapping = utils.load_pickle(task._label_mapping_path)
+    inv_label_mapping = {v:k for k,v in label_mapping.items()}
+    tokenizer = task._tokenizer
+    output = {"sentences":[],"labels":[],"predictions":[]}
+    for r in results:
+      if r["task_id"] != len(self._tasks):
+        r = utils.nest_dict(r, self._config.task_names)
+        r = r[task.name]
+        n_words = int(round(np.sum(r['input_mask'])))
+        n_labels = int(round(np.sum(r['labels_mask'])))
+        input_ids = r['input_ids'][1:n_words - 1]
+        labels = r['labels'][:n_labels]
+        predictions = r['predictions'][:n_labels]
+        labeled_positions = r['labeled_positions'][:n_labels]
+        sentence = []
+        tokens = tokenizer.convert_ids_to_tokens(input_ids)
+        labels = [inv_label_mapping[label] for label in labels]
+        predictions = [inv_label_mapping[prediction] for prediction in predictions]
+        last_index = 0
+        for index in range(1,max(labeled_positions+1)):
+          if index in labeled_positions:
+            sentence.append(tokens[index-1])
+          else:
+            for idx in range(last_index+1,index):
+              if tokens[idx].startswith("##"):
+                sentence[-1] += tokens[idx][2:]
+              else:
+                sentence[-1] += tokens[idx]
+          last_index = index - 1 
+        assert len(sentence) == len(labels)
+        output["sentences"].append(sentence)
+        output["labels"].append(labels)
+        output["predictions"].append(predictions)
+    if task.name != 'pico':
+      print(classification_report(output["labels"],output["predictions"],digits=4))
+    print("writing output file")
+    with open(f"output/{task.name}.tsv",'w') as f:
+      for words,labels,preds in zip(output["sentences"],output["labels"],output["predictions"]):
+        for word,label,pred in zip(words,labels,preds):
+          f.write("\t".join([word,label,pred])+"\n")
+        f.write("\n")
 
 def write_results(config: configure_finetuning.FinetuningConfig, results):
   """Write evaluation metrics to disk."""
@@ -238,7 +290,7 @@ def write_results(config: configure_finetuning.FinetuningConfig, results):
         if task_name == "time" or task_name == "global_step":
           continue
         results_str += task_name + ": " + " - ".join(
-            ["{:}: {:.2f}".format(k, v)
+            ["{:}: {:.4f}".format(k, v)
              for k, v in task_results.items()]) + "\n"
     f.write(results_str)
   utils.write_pickle(results, config.results_pkl)
@@ -273,13 +325,14 @@ def run_finetuning(config: configure_finetuning.FinetuningConfig):
     if config.do_eval:
       heading("Run dev set evaluation")
       results.append(model_runner.evaluate())
+      results.append(model_runner.evaluate("test"))
       write_results(config, results)
       if config.write_test_outputs and trial <= config.n_writes_test:
         heading("Running on the test set and writing the predictions")
         for task in tasks:
           # Currently only writing preds for GLUE and SQuAD 2.0 is supported
           if task.name in ["cola", "mrpc", "mnli", "sst", "rte", "qnli", "qqp",
-                           "sts"]:
+                           "sts","hoc"]:
             for split in task.get_test_splits():
               model_runner.write_classification_outputs([task], trial, split)
           elif task.name == "squad":
@@ -292,6 +345,9 @@ def run_finetuning(config: configure_finetuning.FinetuningConfig):
                 preds[q] = ""
             utils.write_json(preds, config.test_predictions(
                 task.name, "test", trial))
+          elif task.name in ["bc2gm","ncbi","bc5cdr-disease","bc5cdr-chem","jnlpba","pico","share-clefe"]:
+            for split in task.get_test_splits():
+              model_runner.write_tagging_outputs(task, trial, split)
           else:
             utils.log("Skipping task", task.name,
                       "- writing predictions is not supported for this task")

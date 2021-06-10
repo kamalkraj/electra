@@ -183,11 +183,11 @@ def _get_layer_lrs(learning_rate, layer_decay, n_layers):
   key_to_depths = collections.OrderedDict({
       "/embeddings/": 0,
       "/embeddings_project/": 0,
-      "task_specific/": n_layers + 2,
+      "task_specific/": n_layers + 1,
   })
   for layer in range(n_layers):
     key_to_depths["encoder/layer_" + str(layer) + "/"] = layer + 1
   return {
-      key: learning_rate * (layer_decay ** (n_layers + 2 - depth))
+      key: learning_rate * (layer_decay ** (n_layers + 1 - depth))
       for key, depth in key_to_depths.items()
   }

@@ -1,0 +1,16 @@
+{
+    "init_checkpoint":"gs://electra_data_pubmed/models/electra_large_pmc_GA/",
+    "learning_rate":5e-5,
+    "task_names":["pubmedqa"],
+    "model_size":"large",
+    "max_seq_length":512,
+    "do_train":true,
+    "num_train_epochs":20.0,
+    "train_batch_size":32,
+    "weight_decay_rate":0,
+    "iterations_per_loop":1000,
+    "use_tpu":true,
+    "num_tpu_cores":8,
+    "use_tfrecords_if_existing":true,
+    "tpu_name":"electrapmc"
+}

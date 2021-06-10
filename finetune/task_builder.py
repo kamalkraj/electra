@@ -38,6 +38,8 @@ def get_task(config: configure_finetuning.FinetuningConfig, task_name,
   """Get an instance of a task based on its name."""
   if task_name == "cola":
     return classification_tasks.CoLA(config, tokenizer)
+  elif task_name == "mednli":
+    return classification_tasks.MedNLI(config, tokenizer)
   elif task_name == "mrpc":
     return classification_tasks.MRPC(config, tokenizer)
   elif task_name == "mnli":
@@ -52,6 +54,8 @@ def get_task(config: configure_finetuning.FinetuningConfig, task_name,
     return classification_tasks.QQP(config, tokenizer)
   elif task_name == "sts":
     return classification_tasks.STS(config, tokenizer)
+  elif task_name == 'biosses':
+    return classification_tasks.BIOSSES(config, tokenizer)
   elif task_name == "squad":
     return qa_tasks.SQuAD(config, tokenizer)
   elif task_name == "squadv1":
@@ -66,5 +70,35 @@ def get_task(config: configure_finetuning.FinetuningConfig, task_name,
     return qa_tasks.SearchQA(config, tokenizer)
   elif task_name == "chunk":
     return tagging_tasks.Chunking(config, tokenizer)
+  elif task_name == "bc2gm":
+    return tagging_tasks.BC2GM(config, tokenizer)
+  elif task_name == "ncbi":
+    return tagging_tasks.NCBI(config, tokenizer)
+  elif task_name == "bc5cdr-disease":
+    return tagging_tasks.BC5CDR_DISEASE(config, tokenizer)
+  elif task_name == "bc5cdr-chem":
+    return tagging_tasks.BC5CDR_CHEM(config, tokenizer)
+  elif task_name == "jnlpba":
+    return tagging_tasks.JNLPBA(config, tokenizer)
+  elif task_name == "bioasq":
+    return classification_tasks.BioASQ(config, tokenizer)
+  elif task_name == "pubmedqa":
+    return classification_tasks.PubMedQA(config, tokenizer)
+  elif task_name == "pico":
+    return tagging_tasks.PICO(config, tokenizer)
+  elif task_name == "ddi":
+    return classification_tasks.DDI(config, tokenizer)
+  elif task_name == "chemprot":
+    return classification_tasks.ChemProt(config, tokenizer)
+  elif task_name == "gad":
+    return classification_tasks.GAD(config, tokenizer)
+  elif task_name == "hoc":
+    return classification_tasks.HOC(config, tokenizer)
+  elif task_name == "share-clefe":
+    return tagging_tasks.SHARE_CLEFE(config, tokenizer)
+  elif task_name == "i2b2":
+    return classification_tasks.I2B2(config, tokenizer)
+  elif task_name == "clinicalsts":
+    return classification_tasks.CLINICALSTS(config, tokenizer)
   else:
     raise ValueError("Unknown task " + task_name)

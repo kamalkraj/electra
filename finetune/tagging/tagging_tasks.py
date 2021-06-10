@@ -15,26 +15,21 @@
 
 """Sequence tagging tasks."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function
 
 import abc
 import collections
 import os
-import tensorflow.compat.v1 as tf
 
 import configure_finetuning
-from finetune import feature_spec
-from finetune import task
-from finetune.tagging import tagging_metrics
-from finetune.tagging import tagging_utils
+import tensorflow.compat.v1 as tf
+from finetune import feature_spec, task
+from finetune.tagging import tagging_metrics, tagging_utils
 from model import tokenization
 from pretrain import pretrain_helpers
 from util import utils
 
-
-LABEL_ENCODING = "BIOES"
+LABEL_ENCODING = "BIO"
 
 
 class TaggingExample(task.Example):
@@ -91,7 +86,7 @@ class TaggingTask(task.Task):
     train_tags = set()
     for split in ["train", "dev", "test"]:
       if not tf.io.gfile.exists(os.path.join(
-          self.config.raw_data_dir(self.name), split + ".txt")):
+          self.config.raw_data_dir(self.name), split + ".tsv")):
         continue
       if split == provided_split:
         split_sentences = provided_sentences
@@ -136,7 +131,6 @@ class TaggingTask(task.Task):
         tagged_positions.append(len(input_ids))
       for token in word_tokens:
         input_ids.append(self._tokenizer.vocab[token])
-
     pad = lambda x: x + [0] * (self.config.max_seq_length - len(x))
     labels = pad(example.labels[:self.config.max_seq_length])
     labeled_positions = pad(tagged_positions)
@@ -164,7 +158,7 @@ class TaggingTask(task.Task):
   def _get_labeled_sentences(self, split):
     sentences = []
     with tf.io.gfile.GFile(os.path.join(self.config.raw_data_dir(self.name),
-                                        split + ".txt"), "r") as f:
+                                        split + ".tsv"), "r") as f:
       sentence = []
       for line in f:
         line = line.strip().split()
@@ -183,7 +177,7 @@ class TaggingTask(task.Task):
     return sentences
 
   def get_scorer(self):
-    return tagging_metrics.AccuracyScorer() if self._is_token_level else \
+    return tagging_metrics.AccuracyScorer(self._get_label_mapping()) if self._is_token_level else \
       tagging_metrics.EntityLevelF1Scorer(self._get_label_mapping())
 
   def get_feature_specs(self):
@@ -201,10 +195,12 @@ class TaggingTask(task.Task):
   def get_prediction_module(
       self, bert_model, features, is_training, percent_done):
     n_classes = len(self._get_label_mapping())
-    reprs = bert_model.get_sequence_output()
-    reprs = pretrain_helpers.gather_positions(
-        reprs, features[self.name + "_labeled_positions"])
-    logits = tf.layers.dense(reprs, n_classes)
+    with tf.tpu.bfloat16_scope():
+      reprs = bert_model.get_sequence_output()
+      reprs = pretrain_helpers.gather_positions(
+          reprs, features[self.name + "_labeled_positions"])
+      logits = tf.layers.dense(reprs, n_classes)
+    logits = tf.cast(logits, dtype=tf.float32)
     losses = tf.nn.softmax_cross_entropy_with_logits(
         labels=tf.one_hot(features[self.name + "_labels"], n_classes),
         logits=logits)
@@ -214,6 +210,9 @@ class TaggingTask(task.Task):
         loss=losses,
         logits=logits,
         predictions=tf.argmax(logits, axis=-1),
+        input_ids=features["input_ids"],
+        input_mask=features["input_mask"],
+        labeled_positions=features[self.name + "_labeled_positions"],
         labels=features[self.name + "_labels"],
         labels_mask=features[self.name + "_labels_mask"],
         eid=features[self.name + "_eid"],
@@ -251,3 +250,52 @@ class Chunking(TaggingTask):
 
   def __init__(self, config, tokenizer):
     super(Chunking, self).__init__(config, "chunk", tokenizer, False)
+
+
+class BC2GM(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(BC2GM, self).__init__(config, "bc2gm", tokenizer, False)
+
+
+class NCBI(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(NCBI, self).__init__(config, "ncbi", tokenizer, False)
+
+
+class BC5CDR_DISEASE(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(BC5CDR_DISEASE, self).__init__(config, "bc5cdr-disease", tokenizer, False)
+  
+
+class BC5CDR_CHEM(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(BC5CDR_CHEM, self).__init__(config, "bc5cdr-chem", tokenizer, False)
+
+
+class JNLPBA(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(JNLPBA, self).__init__(config, "jnlpba", tokenizer, False)
+
+
+class PICO(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(PICO, self).__init__(config, "pico", tokenizer, True)
+
+
+class SHARE_CLEFE(TaggingTask):
+  """Text NER."""
+
+  def __init__(self, config, tokenizer):
+    super(SHARE_CLEFE, self).__init__(config, "share-clefe", tokenizer, False)

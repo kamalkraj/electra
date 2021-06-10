@@ -140,5 +140,6 @@ cython_debug/
 base_phase_1.json
 .vscode/*
 *.tsv
-*.json
 *.txt
+run_exp.py
+run_finetuning_exp.py

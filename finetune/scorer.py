@@ -50,5 +50,5 @@ class Scorer(object):
     return [(prefix + k, v) for k, v in results]
 
   def results_str(self):
-    return " - ".join(["{:}: {:.2f}".format(k, v)
+    return " - ".join(["{:}: {:.4f}".format(k, v)
                        for k, v in self.get_results()])

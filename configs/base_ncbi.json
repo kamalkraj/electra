@@ -1,0 +1,18 @@
+{
+    "init_checkpoint":"gs://electra_data_pubmed/models/electra_base_pubmed_1m_phase2/",
+    "learning_rate":2e-4,
+    "task_names":["ncbi"],
+    "model_size":"base",
+    "max_seq_length":128,
+    "do_train":true,
+    "write_test_outputs":false,
+    "num_train_epochs":5.0,
+    "train_batch_size":32,
+    "weight_decay_rate":0,
+    "iterations_per_loop":1000,
+    "use_tpu":true,
+    "num_tpu_cores":8,
+    "use_tfrecords_if_existing":true,
+    "tpu_name":"electralarge"
+}
+
